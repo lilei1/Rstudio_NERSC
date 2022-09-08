@@ -1,0 +1,139 @@
+library(edgeR)
+library(DESeq2)
+library(tidyr)
+
+counts <- read.delim("/global/projectb/scratch/llei2019/CSP_Kranthi/sus_beni/final_susceptible_benificial_count_formal.txt", row.names = 1)
+head(counts)
+nrow(counts)
+#32439
+metaData <- read.delim("/global/projectb/scratch/llei2019/CSP_Kranthi/sus_beni/Meta_data_sus_beni.txt",header = T)
+head(metaData)
+nrow(metaData)
+#125 #78
+#32439*78
+#extract the column I needed!!!
+col.num <- which( colnames(counts) %in% metaData$code)
+row.num <- which( metaData$code %in% colnames(counts) )
+counts <- counts[, col.num]
+mata <- metaData[row.num,]
+ncol(counts)
+head(counts)
+#This is to convert a dataframe into single column.
+counts_long <- gather(counts,code,counts)
+#head(counts_long)
+#nrow(counts_long)
+#this is to find the reasonable cutoff for the threshold setting
+quantile(counts_long$counts,probs=seq(0,1,0.01))
+#0%        1%        2%        3%        4%        5%        6%        7%        8% 
+#0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00 
+#9%       10%       11%       12%       13%       14%       15%       16%       17% 
+#0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00      0.00 
+#18%       19%       20%       21%       22%       23%       24%       25%       26% 
+#0.00      0.00      0.00      1.00      1.00      1.00      2.00      2.00      2.00 
+#27%       28%       29%       30%       31%       32%       33%       34%       35% 
+#3.00      4.00      4.00      5.00      6.00      7.00      9.00     10.00     12.00 
+#36%       37%       38%       39%       40%       41%       42%       43%       44% 
+#14.00     17.00     19.00     23.00     26.00     30.00     34.00     39.00     44.00 
+#45%       46%       47%       48%       49%       50%       51%       52%       53% 
+#50.00     57.00     64.00     72.00     80.00     90.00    100.00    110.00    122.00 
+#54%       55%       56%       57%       58%       59%       60%       61%       62% 
+#134.00    147.00    161.00    177.00    193.00    210.00    228.00    248.00    268.00 
+#63%       64%       65%       66%       67%       68%       69%       70%       71% 
+#290.00    314.00    338.00    364.00    392.00    421.00    453.00    485.00    520.00 
+#72%       73%       74%       75%       76%       77%       78%       79%       80% 
+#558.00    598.00    640.00    686.00    735.00    787.00    843.00    903.00    969.00 
+#81%       82%       83%       84%       85%       86%       87%       88%       89% 
+#1040.00   1118.00   1204.00   1299.00   1403.00   1517.00   1648.00   1796.00   1964.00 
+#90%       91%       92%       93%       94%       95%       96%       97%       98% 
+#2159.00   2388.00   2661.00   2992.00   3418.00   3974.00   4740.00   5883.77   7871.00 
+#99%      100% 
+#  12735.59 745776.00 
+
+#mata <- metaData
+count.cutoff = 5 # 10 #30% of the datapoint is greater than 5;
+bioreplicates.cutoff = 3
+## RAW COUNTS ##
+keep <- rowSums(counts >= count.cutoff) >= bioreplicates.cutoff
+counts <- counts[keep, ]
+#?rowSums
+nrow(counts)
+#28994 #28034
+#CPM#
+count.cutoff = 1
+bioreplicates.cutoff = 3
+normalized.counts <- cpm(counts)
+head(normalized.counts)
+###below is for find the propriate threshold to do filtering based on the cpm normalization
+normalized.counts.re <- data.frame(normalized.counts)
+head(normalized.counts.re)
+normalized.counts_long <- gather(normalized.counts.re,code,counts)
+head(normalized.counts_long)
+nrow(counts_long)
+#this is to find the reasonable cutoff for the threshold setting
+quantile(normalized.counts_long$counts,probs=seq(0,1,0.01))
+#0%           1%           2%           3%           4%           5%           6% 
+#0.000000e+00 0.000000e+00 0.000000e+00 0.000000e+00 0.000000e+00 0.000000e+00 0.000000e+00 
+#7%           8%           9%          10%          11%          12%          13% 
+#0.000000e+00 0.000000e+00 0.000000e+00 2.378607e-02 3.313025e-02 4.190232e-02 5.695266e-02 
+#14%          15%          16%          17%          18%          19%          20% 
+#6.842709e-02 8.424033e-02 1.042666e-01 1.212527e-01 1.443976e-01 1.716194e-01 2.021567e-01 
+#21%          22%          23%          24%          25%          26%          27% 
+#2.346373e-01 2.724532e-01 3.151602e-01 3.666600e-01 4.207021e-01 4.858355e-01 5.552406e-01 
+#28%          29%          30%          31%          32%          33%          34% 
+#6.330041e-01 7.221795e-01 8.218401e-01 9.307523e-01 1.046587e+00 1.179365e+00 1.324771e+00 
+#35%          36%          37%          38%          39%          40%          41% 
+#1.475968e+00 1.648849e+00 1.832703e+00 2.033952e+00 2.250541e+00 2.482839e+00 2.731765e+00 
+#42%          43%          44%          45%          46%          47%          48% 
+#3.004099e+00 3.293245e+00 3.601655e+00 3.925618e+00 4.272597e+00 4.644380e+00 5.040850e+00 
+#49%          50%          51%          52%          53%          54%          55% 
+#5.463441e+00 5.903152e+00 6.375891e+00 6.873157e+00 7.402718e+00 7.950792e+00 8.540610e+00 
+#56%          57%          58%          59%          60%          61%          62% 
+#9.150855e+00 9.782303e+00 1.045342e+01 1.115525e+01 1.189972e+01 1.266262e+01 1.347201e+01 
+#63%          64%          65%          66%          67%          68%          69% 
+#1.431968e+01 1.522466e+01 1.616132e+01 1.715126e+01 1.819901e+01 1.929104e+01 2.044136e+01 
+#70%          71%          72%          73%          74%          75%          76% 
+#2.166608e+01 2.297381e+01 2.436335e+01 2.581030e+01 2.734862e+01 2.895849e+01 3.066845e+01 
+#77%          78%          79%          80%          81%          82%          83% 
+#3.248447e+01 3.444902e+01 3.652371e+01 3.878452e+01 4.120499e+01 4.380019e+01 4.667505e+01 
+#84%          85%          86%          87%          88%          89%          90% 
+#4.978968e+01 5.322760e+01 5.698428e+01 6.122125e+01 6.598007e+01 7.141643e+01 7.763984e+01 
+#91%          92%          93%          94%          95%          96%          97% 
+#8.499850e+01 9.381412e+01 1.045849e+02 1.181499e+02 1.358357e+02 1.604172e+02 1.971760e+02 
+#98%          99%         100% 
+#2.611448e+02 4.126039e+02 2.800507e+04 
+keep <- rowSums(normalized.counts >= count.cutoff) >= bioreplicates.cutoff
+#abiotic_shoot_count(keep)
+normalized.counts <- normalized.counts[keep, ]
+nrow(normalized.counts)
+#25189 19982
+#counts <- counts[keep, ]
+#nrow(counts)
+#19982
+
+#nrow(counts)
+##24110
+#row.names(normalized.counts)
+counts <- counts[row.names(normalized.counts),]
+nrow(counts)
+#25189 19982
+#counts[21822,]
+#grep("Brasy3G282900", rownames(counts))#check if this gene got filtered
+#21822/36927
+## VST instead of voom
+#counts[is.na(counts)] <- 0
+#creat a group 
+mata$group <- paste(mata$accessions,mata$experiment,mata$tissue,mata$treatment, mata$timepoint, sep='.')
+head(mata)
+dds <- DESeq2::DESeqDataSetFromMatrix(countData = as.matrix(counts), colData = as.data.frame(mata), design = ~group )
+expr.vst <- assay(DESeq2::vst(dds))
+head(expr.vst)
+#str(expr.vst)
+expr.vst <- as.data.frame(expr.vst)
+
+write.table(x = expr.vst,
+            file = "/global/projectb/scratch/llei2019/CSP_Kranthi/sus_beni/normalized_VST_final_sus_beni_count_formal.txt",
+            quote = FALSE,
+            sep = "\t",
+            eol = "\n",
+            col.names = TRUE,
+            row.names = TRUE)
