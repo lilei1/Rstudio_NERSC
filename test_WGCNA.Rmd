@@ -1,0 +1,297 @@
+---
+title: "Test_WGCNA_Kranthi"
+output: "different heatmaps of the phenotype-trait association with different datasets" 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## test different type of datasets to build the WGCNA network and see which one makes more sense.
+
+Dataset1: includ all three types of pathogens and 1 type of the benificial microbias
+The metadata locate in this dir "/global/projectb/scratch/llei2019/CSP_Kranthi/sus_beni/Meta_data_sus_beni.txt"
+
+```{r dataset1 test}
+#install.packages("WGCNA")
+source("https://bioconductor.org/biocLite.R")
+biocLite(c("AnnotationDbi", "impute","GO.db", "preprocessCore"))
+site="https://mirrors.tuna.tsinghua.edu.cn/CRAN"
+install.packages(c("WGCNA", "stringr", "reshape2"), repos=site)
+#dependencies 'robustbase', 'mvtnorm', 'pcaPP' are not available for package 'rrcov'
+biocLite("textshape")
+biocLite("ggfortify")
+install.packages("dynamicTreeCut", "cluster", "flashClust", "Hmisc", "reshape", "foreach", "doParallel" ) 
+install.packages("igraph","ggfortify")
+install.packages("ggfortify")
+#load libaries
+library(igraph)
+library(textshape)
+library(WGCNA)
+library(reshape2)
+library(stringr)
+library(tidyr)
+options(stringsAsFactors = FALSE)
+allowWGCNAThreads()
+
+type = "unsigned"
+#type = "signed"
+corType = "pearson"
+maxPOutliers = ifelse(corType=="pearson",1,0.05)
+robustY = ifelse(corType=="pearson",T,F)
+tpm <- read.delim("/global/projectb/scratch/llei2019/CSP_Kranthi/sus_beni/normalized_VST_final_sus_beni_count_formal.txt",sep="\t",header=T)
+metaData <- read.delim("/global/projectb/scratch/llei2019/CSP_Kranthi/sus_beni/Meta_data_sus_beni.txt",header = T)
+
+#extract the column I needed!!!
+col.num <- which( colnames(tpm) %in% metaData$code)
+row.num <- which( metaData$code %in% colnames(tpm) )
+tpm <- tpm[, col.num]
+metaData <- metaData[row.num,]
+ncol(tpm)
+head(tpm)
+head(metaData)
+#code are the same with the code in the data
+header <- paste(metaData$accessions,metaData$experiment,metaData$tissue,metaData$treatment, metaData$timepoint, metaData$replicate,sep='_')
+#metaData$group <- paste(metaData$accessions,metaData$experiment,metaData$tissue,metaData$treatment,metaData$timepoint, sep='_')
+metaData$group <- paste(metaData$accessions,metaData$experiment,metaData$tissue,metaData$treatment, sep='_')
+
+datTraits <- data.frame(header,metaData$group)
+str(datTraits)
+colnames(datTraits) <- c("ID","group")
+head(datTraits)
+head(tpm)
+str(tpm)
+#I compare the order of the code in the tmp file and the metadata file and found that they are teh same
+colnames(tpm) <- header
+#tpm[1,]
+#hist(tpm$Shoot_CK_1h.s1)
+#femData <- sapply(tpm,function(x) log(x+1))
+femData <- tpm
+#column_to_rownames(tpm,"X")
+#row.names(femData) <- tpm$GID
+femData <-data.frame(femData)
+
+### select genes with MAD >75% since I tested with before, 75% of the data is consistent with Renash's DEG data.
+dim(femData) #[1] 19982    78 
+head(femData)
+m.mad <- apply(femData,1,mad)#median absolute deviation (MAD)
+head(m.mad)
+quantile(m.mad, probs=seq(0, 1, 0.05))
+#0%        5%       10%       15%       20%       25%       30%       35%       40% 
+#0.0000000 0.1947251 0.2402565 0.2774659 0.3134411 0.3482913 0.3846300 0.4248659 0.4686480 
+#45%       50%       55%       60%       65%       70%       75%       80%       85% 
+#0.5150579 0.5667942 0.6299805 0.6932431 0.7738405 0.8664585 0.9766338 1.1200309 1.2992371 
+#90%       95%      100% 
+#1.5503801 1.9688731 5.6023635 
+femData <- femData[which(m.mad > 
+                           max(quantile(m.mad, probs=seq(0, 1, 0.05))[6],0.01)),]
+###
+datExpr0 <- as.data.frame(t(femData))
+head(datExpr0[,1:8])
+dim(datExpr0) #[1] 78 14986 
+rownames(datExpr0)
+colnames(datExpr0)
+
+#This function iteratively identifies samples and genes with too many missing entries and genes with zero variance. 
+#Iterations may be required since excluding samples effectively changes criteria on genes and vice versa. 
+#The process is repeated until the lists of good samples and genes are stable. 
+gsg = goodSamplesGenes(datExpr0, verbose = 3)
+
+gsg$allOK
+### remove the offending genes and samples from the data
+if (!gsg$allOK)
+{
+  # Optionally, print the gene and sample names that were removed:
+  if (sum(!gsg$goodGenes)>0)
+    printFlush(paste("Removing genes:", paste(names(datExpr0)[!gsg$goodGenes], collapse = ", ")));
+  if (sum(!gsg$goodSamples)>0)
+    printFlush(paste("Removing samples:", paste(rownames(datExpr0)[!gsg$goodSamples], collapse = ", ")));
+  # Remove the offending genes and samples from the data:
+  datExpr0 = datExpr0[gsg$goodSamples, gsg$goodGenes]
+}
+nGenes = ncol(datExpr0)#75%[1] 14986 
+nSamples = nrow(datExpr0)#78 
+head(datExpr0[,1:8])
+sampleTree = hclust(dist(datExpr0), method = "average")
+# Plot the sample tree: Open a graphic output window of size 12 by 9 inches
+# The user should change the dimensions if the window is too large or too small. sizeGrWindow(12,9)
+#pdf(file = "Plots/sampleClustering.pdf", width = 12, height = 9);
+#par(cex = 0.6);
+par(mar = c(0,5,2,0))
+pdf(file = "/global/projectb/scratch/llei2019/CSP_Kranthi/sus_beni/VST_sus_beni_tree_mad75_trait.pdf",width = 25,height = 20)
+plot(sampleTree,main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 2,cex.axis = 1.5, cex.main = 2)
+abline(h = 150, col = "red");
+myCol = c("pink1", "violet", "mediumpurple1", "slateblue1", "purple", "purple3",
+          "turquoise2", "skyblue", "steelblue", "blue2", "navyblue",
+          "orange", "tomato", "coral2", "palevioletred", "violetred", "red2")
+
+sample_colors <- numbers2colors(as.numeric(factor(datTraits$group)), 
+                                colors = myCol, signed = FALSE)
+par(mar = c(1,4,3,1),cex=0.8)
+plotDendroAndColors(sampleTree, sample_colors,
+                    groupLabels = colnames(sample),
+                    cex.dendroLabels = 0.8,
+                    marAll = c(1, 4, 3, 1),
+                    cex.rowText = 0.01,
+                    main = "Sample dendrogram and trait heatmap")
+
+dev.off()
+# Determine cluster under the line
+clust = cutreeStatic(sampleTree, cutHeight = 150, minSize = 10)
+table(clust)
+# clust 1 contains the samples we want to keep.
+keepSamples = (clust!=0)
+datExpr = datExpr0[keepSamples, ]
+nGenes = ncol(datExpr)#14986
+nSamples = nrow(datExpr)#78
+
+#all of the samples has passed!
+#do a PCA analysis for the samples to see what will happen:
+ir.pca <- prcomp(datExpr,
+                 center = TRUE,
+                 scale. = TRUE) 
+print(ir.pca)
+
+library(ggfortify)
+autoplot(ir.pca,data = datTraits, colour = 'group',shape = FALSE, label.size = 3)
+ggsave("/global/projectb/scratch/llei2019/CSP_Kranthi/sus_beni/VST_sus_patho_root_pca_mad25.pdf", width = 30, height = 25)
+dev.off()
+###Automatic block-wise network
+# Choose a set of soft-thresholding powers
+powers = c(c(1:10), seq(from = 12, to=20, by=2))
+# Call the network topology analysis function
+sft = pickSoftThreshold(datExpr, powerVector = powers, verbose = 5)
+head(sft)
+power = sft$powerEstimate
+power
+#6
+# Plot the results:
+sizeGrWindow(9, 5)
+par(mfrow = c(1,2))
+cex1 = 0.9
+pdf(file = "/global/projectb/scratch/llei2019/CSP_Kranthi/sus_beni/power_soft_thresh_VST_sus_path_root_mad25.pdf",width = 10,height = 10)
+# Scale-free topology fit index as a function of the soft-thresholding power plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+plot(sft$fitIndices[,1],-sign(sft$fitIndices[,3])*sft$fitIndices[,2],xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n", main = "Scale independence")
+
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],labels=powers,cex=cex1,col="red")
+abline(h=0.6,col="red")
+#abline(h=0.9,col="red")
+
+# this line corresponds to using an R^2 cut-off of h abline(h=0.90,col="red")
+# Mean connectivity as a function of the soft-thresholding power 
+plot(sft$fitIndices[,1], sft$fitIndices[,5],xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+#abline(h=0.85,col="red")
+dev.off()
+
+#power = 16 is the best according to the plot, I set the mergeCutHeight = 0.3
+#try 6 to see how it look like
+#test to see if signed is better since this suggested https://peterlangfelder.com/2018/11/25/signed-or-unsigned-which-network-type-is-preferable/
+bwnet = blockwiseModules(datExpr,maxBlockSize = nGenes,
+                         power = 16, TOMType = type, minModuleSize = 30,
+                         reassignThreshold = 0, mergeCutHeight = 0.25, numericLabels = TRUE,pamRespectsDendro = FALSE,
+                         saveTOMs = TRUE,corType = corType,
+                         maxPOutliers=maxPOutliers, loadTOMs=TRUE,
+                         saveTOMFileBase = "BrachySus_TOM-blockwise", verbose = 3)
+head(bwnet)
+bwLabels = bwnet$colors
+table(bwnet$colors)
+#power = 16
+#0    1    2    3    4    5    6    7    8    9   10   11   12   13 
+#405 4941 4756 1716  954  650  507  315  221  173  140  124   48   36 
+bwModuleColors = labels2colors(bwLabels)
+table(bwModuleColors)
+#black        blue       brown       green greenyellow        grey     magenta 
+#315        4756        1716         650         124         405         173 
+#pink      purple         red      salmon         tan   turquoise      yellow 
+#221         140         507          36          48        4941         954 
+
+#try to merge:
+merge = mergeCloseModules(datExpr, bwModuleColors[bwnet$blockGenes[[1]]], cutHeight = 0.3, verbose = 3)
+mergedColors = merge$colors
+#moduleLabels = merge$colors
+#cbind(moduleLabels, bwnet$colors)
+table(merge$colors)
+#black        blue       green greenyellow        grey     magenta        pink 
+#315        6472         650         124         405         173         221 
+#purple         red      salmon      yellow 
+#188        5448          36         954
+
+# open a graphics window
+sizeGrWindow(6,6)
+pdf(file = "/global/projectb/scratch/llei2019/CSP_Kranthi/sus_beni/Dendro_VST_sus_pathoRoot_mad75_cut0.25_p8.pdf",width = 25,height = 25)
+# Plot the dendrogram and the module colors underneath for block 1
+plotDendroAndColors(bwnet$dendrograms[[1]], bwModuleColors[bwnet$blockGenes[[1]]],
+                    "Module colors", main = "Gene dendrogram and module colors in block 1",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+#plotDendroAndColors(bwnet$dendrograms[[1]], cbind(bwModuleColors[bwnet$blockGenes[[1]]], mergedColors),
+#                    c("Dynamic Tree Cut", "Merged dynamic"), main = "Gene dendrogram and module colors in block 1",
+#                    dendroLabels = FALSE, hang = 0.03,
+#                    addGuide = TRUE, guideHang = 0.05)
+dev.off()
+#Power=6 seems to bebetter
+#head(bwnet) Since there are not huge different between the merged and unmerged,so still keep the unmerged
+#mergedMEs = merge$newMEs
+MEs = bwnet$MEs
+MEs_col = MEs
+#MEs_col = mergedMEs
+colnames(MEs_col) = paste0("ME", labels2colors(as.numeric(str_replace_all(colnames(MEs),"ME",""))))
+MEs_col = orderMEs(MEs_col)
+pdf(file = "/global/projectb/scratch/llei2019/CSP_Kranthi/sus_beni/eigennetwork_VST_sus_pathoroot_mads75_0.25_power12.pdf",width = 15,height = 13)
+plotEigengeneNetworks(MEs_col, "Eigengene adjacency heatmap", 
+                      marDendro = c(3,3,2,4),
+                      marHeatmap = c(3,4,2,2), plotDendrograms = T, 
+                      xLabelsAngle = 90)
+dev.off()
+
+head(MEs_col)
+
+
+#trait module association
+#In R:
+#Plot the relationships between modules and traits
+str(datTraits)
+design = model.matrix(~0+ as.factor(datTraits$group))
+#design <- design[,c(1,2,3,4,6,5)]
+#colnames(design) = c("Bd21_fungi_leaves_Mock","Bd21_fungi_leaves_PCA",
+#                     "Bd21-3_bacteria_leaves_Mock","Bd21-3_bacteria_leaves_XT",
+#                     "Bd21-3_virus_leaves_Mock","Bd21-3_virus_leaves_BSMV",
+#                     "Bd21-3_virus_root_Mock", "Bd21-3_virus_root_BSMV",
+#                     "Bd21-3_Endophytes_shoot_Mock","Bd21-3_Endophytes_shoot_SV",
+#                     "Bd21-3_Endophytes_root_Mock", "Bd21-3_Endophytes_root_SV")
+colnames(design) = levels(as.factor(datTraits$group))
+#colnames(design) = c("Bd21_fungi_Mock","Bd21_fungi_PCA",
+#                     "Bd21-3_bacteria_Mock","Bd21-3_bacteria_XT",
+#                     "Bd21-3_virus_Mock", "Bd21-3_virus_BSMV")
+
+moduleColors = labels2colors(bwnet$colors)
+nGenes = ncol(datExpr)
+nSamples = nrow(datExpr)
+# Recalculate MEs with color labels
+MEs0 = moduleEigengenes(datExpr, moduleColors)$eigengenes
+MEs = orderMEs(MEs0)
+moduleTraitCor = cor(MEs, design, use = "p")
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples)
+
+#Display the correlations and their p-values
+textMatrix = paste(signif(moduleTraitCor, 2), "\n(",
+                   signif(moduleTraitPvalue, 1), ")", sep = "")
+dim(textMatrix) = dim(moduleTraitCor)
+par(mar = c(6, 8.5, 3, 3))
+pdf("/global/projectb/scratch/llei2019/CSP_Kranthi/sus_beni/pheno-module_time_combined_VST_suspathoroot_mads75_encoding1_0.25power12.pdf",width = 15,height = 15)
+#Display the correlation values within a heatmap plot
+labeledHeatmap(Matrix = moduleTraitCor,
+               xLabels = colnames(design),
+               yLabels = names(MEs),
+               ySymbols = names(MEs),
+               colorLabels = FALSE,
+               colors = blueWhiteRed(50),
+               textMatrix = textMatrix,
+               setStdMargins = FALSE,
+               cex.text = 0.6,
+               zlim = c(-1,1),
+               main = paste("Module-trait relationships"))
+dev.off()
+```
+
